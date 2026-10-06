@@ -555,7 +555,7 @@ public abstract class AbstractPatriciaTrie<K, V> extends AbstractBitwiseTrie<K, 
     /**
      * A submap used for prefix views over the {@link Trie}.
      */
-    private final class PrefixRangeMap extends AbstractRangeMap {
+    private final class PrefixRangeMap extends AbstractRangeMap implements PrefixMapView<K, V> {
 
         private final K prefix;
 
@@ -717,6 +717,22 @@ public abstract class AbstractPatriciaTrie<K, V> extends AbstractBitwiseTrie<K, 
                 throw new NoSuchElementException();
             }
             return last;
+        }
+
+        /**
+         * {@inheritDoc}
+         * <p>
+         * The membership check uses {@link KeyAnalyzer#isPrefix(Object, int, int, Object)} through {@link #inRange(Object)}, so it is the key's real bit
+         * prefix that decides whether the key belongs to this view. A rejected key leaves the backing {@link Trie} completely unchanged; an accepted key is
+         * written through the backing trie's regular {@link AbstractPatriciaTrie#put(Object, Object)} update path.
+         * </p>
+         */
+        @Override
+        public V putChecked(final K key, final V value) {
+            if (!inRange(key)) {
+                throw new IllegalArgumentException("Key is out of range: " + key);
+            }
+            return AbstractPatriciaTrie.this.put(key, value);
         }
     }
 
@@ -1876,6 +1892,23 @@ public abstract class AbstractPatriciaTrie<K, V> extends AbstractBitwiseTrie<K, 
     @Override
     public SortedMap<K, V> prefixMap(final K key) {
         return getPrefixMapByBits(key, 0, lengthInBits(key));
+    }
+
+    /**
+     * Returns a {@link PrefixMapView} of this {@link Trie} of all elements that are prefixed, on a bit level, by the given key. This is the same view as
+     * {@link #prefixMap(Object)}, exposed through the {@link PrefixMapView} type so that callers can use the checked {@link PrefixMapView#putChecked(Object,
+     * Object)} entry point.
+     * <p>
+     * Whether a key belongs to the view is decided by this trie's {@link KeyAnalyzer}, that is by the key's real bit prefix and never by a string-level
+     * prefix.
+     * </p>
+     *
+     * @param key The key used in the search.
+     * @return A {@link PrefixMapView} of this {@link Trie} with all elements whose key is prefixed, on a bit level, by the search key.
+     * @since 4.6.1
+     */
+    public PrefixMapView<K, V> prefixMapView(final K key) {
+        return new PrefixRangeMap(key, 0, lengthInBits(key));
     }
 
     /**
