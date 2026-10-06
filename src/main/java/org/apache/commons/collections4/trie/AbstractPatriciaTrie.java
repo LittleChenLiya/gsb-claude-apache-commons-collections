@@ -580,6 +580,51 @@ public abstract class AbstractPatriciaTrie<K, V> extends AbstractBitwiseTrie<K, 
             this.lengthInBits = lengthInBits;
         }
 
+        /**
+         * Returns {@code true} if the given key has the same bit prefix as this view's prefix,
+         * as determined by the {@link KeyAnalyzer}'s bit-level comparison.
+         * <p>
+         * This uses {@link KeyAnalyzer#bitIndex(Object, int, int, Object, int, int)} (the real
+         * bit prefix) rather than {@link KeyAnalyzer#isPrefix(Object, int, int, Object)} (which,
+         * for the built-in {@link org.apache.commons.collections4.trie.analyzer.StringKeyAnalyzer},
+         * is a string prefix check). A key is considered to have the prefix if it is at least as
+         * long as the prefix and no bit within the prefix region differs.
+         * </p>
+         *
+         * @param key the key to check, must not be null
+         * @return {@code true} if the key has the bit prefix
+         */
+        private boolean isPrefixInBits(final K key) {
+            final int keyLength = lengthInBits(key);
+            if (keyLength < this.lengthInBits) {
+                return false;
+            }
+            final int bitIndex = getKeyAnalyzer().bitIndex(
+                    this.prefix, this.offsetInBits, this.lengthInBits, key, 0, keyLength);
+            return bitIndex < 0 || bitIndex >= this.lengthInBits;
+        }
+
+        /**
+         * {@inheritDoc}
+         * <p>
+         * This checked entry decides whether the key belongs to the view based on the real bit
+         * prefix of the underlying {@link KeyAnalyzer}, not a string prefix. If the key is outside
+         * the view, an {@link IllegalArgumentException} is thrown and the underlying trie is left
+         * completely unchanged. Legal keys are written through the existing update path
+         * {@link AbstractPatriciaTrie#put(Object, Object)}.
+         * </p>
+         *
+         * @throws IllegalArgumentException if the key is outside the view's bit prefix
+         */
+        @Override
+        public V put(final K key, final V value) {
+            Objects.requireNonNull(key, "key");
+            if (!isPrefixInBits(key)) {
+                throw new IllegalArgumentException("Key is out of range: " + key);
+            }
+            return AbstractPatriciaTrie.this.put(key, value);
+        }
+
         @Override
         public void clear() {
             final Iterator<Map.Entry<K, V>> it = AbstractPatriciaTrie.this.entrySet().iterator();
