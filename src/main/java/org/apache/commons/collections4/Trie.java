@@ -17,6 +17,9 @@
 
 package org.apache.commons.collections4;
 
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.SortedMap;
 
 /**
@@ -42,4 +45,30 @@ public interface Trie<K, V> extends IterableSortedMap<K, V> {
      * @return A {@link SortedMap} view of this {@link Trie} with all elements whose key is prefixed by the search key.
      */
     SortedMap<K, V> prefixMap(K key);
+
+    /**
+     * Returns an {@link Iterator} over the {@link Map.Entry} objects whose keys are prefixed by the given key, in the same lexicographical order as
+     * {@link #prefixMap(Object)}.
+     * <p>
+     * In contrast to the {@link Iterator} of {@link #prefixMap(Object)}, this adapter supports an interleaved {@link Iterator#remove()} cursor contract:
+     * after the current element has been removed, iteration continues with the original-order successor. Removing an element neither skips a not-yet-visited
+     * element nor returns the deleted node again.
+     * </p>
+     * <p>
+     * Any structural modification of the {@link Trie} other than calling {@link Iterator#remove()} still invalidates the iterator in the usual fail-fast way
+     * by throwing a {@link java.util.ConcurrentModificationException}. {@link Iterator#remove()} called before the first {@link Iterator#next()} (or twice
+     * for the same element) throws an {@link IllegalStateException}.
+     * </p>
+     * <p>
+     * The default implementation delegates to the iterator of a read-only copy of the {@link #prefixMap(Object)} view, so its {@link Iterator#remove()}
+     * always throws {@link UnsupportedOperationException}; concrete mutable implementations should override it to return a removable iterator.
+     * </p>
+     *
+     * @param key The key used in the search.
+     * @return An {@link Iterator} of the {@link Map.Entry} objects whose key is prefixed by the search key.
+     * @since 4.6.1
+     */
+    default Iterator<Map.Entry<K, V>> prefixIterator(final K key) {
+        return Collections.unmodifiableMap(prefixMap(key)).entrySet().iterator();
+    }
 }

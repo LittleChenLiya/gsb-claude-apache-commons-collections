@@ -20,6 +20,7 @@ import java.io.Serializable;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -28,6 +29,7 @@ import java.util.SortedMap;
 import org.apache.commons.collections4.OrderedMapIterator;
 import org.apache.commons.collections4.Trie;
 import org.apache.commons.collections4.Unmodifiable;
+import org.apache.commons.collections4.iterators.UnmodifiableIterator;
 import org.apache.commons.collections4.iterators.UnmodifiableOrderedMapIterator;
 import org.apache.commons.collections4.map.UnmodifiableEntrySet;
 
@@ -162,6 +164,16 @@ public class UnmodifiableTrie<K, V> implements Trie<K, V>, Serializable, Unmodif
     @Override
     public SortedMap<K, V> prefixMap(final K key) {
         return Collections.unmodifiableSortedMap(delegate.prefixMap(key));
+    }
+
+    /**
+     * Returns an unmodifiable prefix {@link java.util.Iterator}.
+     *
+     * @throws UnsupportedOperationException Always thrown when {@link java.util.Iterator#remove()} is called.
+     */
+    @Override
+    public Iterator<Entry<K, V>> prefixIterator(final K key) {
+        return UnmodifiableIterator.unmodifiableIterator(delegate.prefixIterator(key));
     }
 
     @Override

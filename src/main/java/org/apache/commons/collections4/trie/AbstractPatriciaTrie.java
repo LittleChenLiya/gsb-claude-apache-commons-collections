@@ -553,6 +553,164 @@ public abstract class AbstractPatriciaTrie<K, V> extends AbstractBitwiseTrie<K, 
     }
 
     /**
+     * A removable {@link Iterator} over the entries of a prefix search.
+     * <p>
+     * The cursor keeps the last key returned by {@link #next()} instead of holding on to a trie node, so after an interleaved {@link #remove()} the
+     * successor is re-resolved against the live tree. This guarantees that iteration continues with the original-order successor: no not-yet-visited entry
+     * is skipped and the deleted entry is never returned again. Any structural change other than {@link #remove()} is detected through {@link #modCount}
+     * and causes the usual fail-fast {@link ConcurrentModificationException}.
+     * </p>
+     */
+    private final class PrefixIterator implements Iterator<Map.Entry<K, V>> {
+
+        private final K prefix;
+
+        private final int lengthInBits;
+
+        /** For fast-fail; updated after every own {@link #remove()} so that deletion does not invalidate this iterator. */
+        private int expectedModCount = AbstractPatriciaTrie.this.modCount;
+
+        /** Key of the last entry returned by {@link #next()}, {@code null} before the first {@link #next()}. */
+        private K lastReturnedKey;
+
+        /** Whether a {@link #next()} has been returned without an intervening {@link #remove()}. */
+        private boolean canRemove;
+
+        /** Lazily resolved entry to return on the next {@link #next()} call. */
+        private TrieEntry<K, V> nextEntry;
+
+        /** Whether {@link #nextEntry} already holds the answer of the next {@link #findNext()}. */
+        private boolean nextResolved;
+
+        /**
+         * Creates a {@link PrefixIterator} for the given prefix.
+         */
+        PrefixIterator(final K prefix, final int lengthInBits) {
+            this.prefix = prefix;
+            this.lengthInBits = lengthInBits;
+        }
+
+        private void checkForComodification() {
+            if (expectedModCount != AbstractPatriciaTrie.this.modCount) {
+                throw new ConcurrentModificationException();
+            }
+        }
+
+        /**
+         * Resolves the first prefixed entry, or {@code null} if there is none.
+         */
+        private TrieEntry<K, V> findFirst() {
+            if (lengthInBits == 0) {
+                // The whole trie is in range; firstEntry() already skips an empty root.
+                return AbstractPatriciaTrie.this.firstEntry();
+            }
+            final TrieEntry<K, V> sub = subtree(prefix, 0, lengthInBits);
+            if (sub == null) {
+                return null;
+            }
+            if (lengthInBits > sub.bitIndex) {
+                // The prefix matches a single entry only.
+                return sub;
+            }
+            final TrieEntry<K, V> first = followLeft(sub);
+            return isPrefixed(first) ? first : null;
+        }
+
+        /**
+         * Resolves the original-order successor of the last returned entry, restricted to the current prefix subtree. The subtree is located afresh on
+         * every call so that structural rewiring performed by {@link #remove()} is taken into account.
+         */
+        private TrieEntry<K, V> findNext() {
+            if (lengthInBits == 0) {
+                // An empty prefix covers the whole trie; walk in global key order.
+                final TrieEntry<K, V> last = AbstractPatriciaTrie.this.getEntry(lastReturnedKey);
+                return last == null ? successorOfKey(lastReturnedKey) : AbstractPatriciaTrie.this.nextEntry(last);
+            }
+            final TrieEntry<K, V> last = AbstractPatriciaTrie.this.getEntry(lastReturnedKey);
+            if (last == null) {
+                // The last returned entry was removed; restart from its successor by key order.
+                return successorOfKey(lastReturnedKey);
+            }
+            final TrieEntry<K, V> sub = subtree(prefix, 0, lengthInBits);
+            if (sub == null) {
+                return null;
+            }
+            final TrieEntry<K, V> candidate;
+            if (lengthInBits > sub.bitIndex) {
+                // The prefix matched a single entry, which has already been returned.
+                candidate = null;
+            } else {
+                candidate = nextEntryInSubtree(last, sub);
+            }
+            return candidate != null && isPrefixed(candidate) ? candidate : null;
+        }
+
+        @Override
+        public boolean hasNext() {
+            checkForComodification();
+            resolveNext();
+            return nextEntry != null;
+        }
+
+        @Override
+        public Map.Entry<K, V> next() {
+            checkForComodification();
+            resolveNext();
+            if (nextEntry == null) {
+                throw new NoSuchElementException();
+            }
+            final TrieEntry<K, V> entry = nextEntry;
+            lastReturnedKey = entry.getKey();
+            canRemove = true;
+            nextResolved = false;
+            nextEntry = null;
+            // Return a detached snapshot: removing the entry via remove() nulls the live node's fields,
+            // and the entry handed to the caller must keep reporting the key that was visited.
+            return new AbstractMap.SimpleImmutableEntry<>(entry.getKey(), entry.getValue());
+        }
+
+        @Override
+        public void remove() {
+            if (!canRemove) {
+                throw new IllegalStateException();
+            }
+            checkForComodification();
+            final TrieEntry<K, V> entry = AbstractPatriciaTrie.this.getEntry(lastReturnedKey);
+            if (entry != null) {
+                AbstractPatriciaTrie.this.removeEntry(entry);
+            }
+            expectedModCount = AbstractPatriciaTrie.this.modCount;
+            canRemove = false;
+            nextResolved = false;
+            nextEntry = null;
+        }
+
+        private void resolveNext() {
+            if (nextResolved) {
+                return;
+            }
+            nextEntry = lastReturnedKey == null ? findFirst() : findNext();
+            nextResolved = true;
+        }
+
+        private boolean isPrefixed(final TrieEntry<K, V> entry) {
+            return entry != null && !entry.isEmpty()
+                    && getKeyAnalyzer().isPrefix(prefix, 0, lengthInBits, entry.getKey());
+        }
+
+        /**
+         * Returns the first still-existing prefixed entry whose key is strictly greater than the given (possibly deleted) key.
+         */
+        private TrieEntry<K, V> successorOfKey(final K key) {
+            TrieEntry<K, V> entry = AbstractPatriciaTrie.this.ceilingEntry(key);
+            while (entry != null && getKeyAnalyzer().compare(key, entry.getKey()) == 0) {
+                entry = AbstractPatriciaTrie.this.nextEntry(entry);
+            }
+            return entry != null && isPrefixed(entry) ? entry : null;
+        }
+    }
+
+    /**
      * A submap used for prefix views over the {@link Trie}.
      */
     private final class PrefixRangeMap extends AbstractRangeMap {
@@ -1876,6 +2034,25 @@ public abstract class AbstractPatriciaTrie<K, V> extends AbstractBitwiseTrie<K, 
     @Override
     public SortedMap<K, V> prefixMap(final K key) {
         return getPrefixMapByBits(key, 0, lengthInBits(key));
+    }
+
+    /**
+     * Returns a removable {@link Iterator} over the {@link Map.Entry} objects whose keys are prefixed by the given key.
+     * <p>
+     * The returned iterator visits the entries in the same lexicographical order as {@link #prefixMap(Object)} and supports an interleaved
+     * {@link Iterator#remove()}: after removing the current entry, the next call to {@link Iterator#next()} resumes with the original-order successor.
+     * See {@link Trie#prefixIterator(Object)} for the full cursor contract. Unlike {@link #prefixMap(Object)}, this method returns the iterator directly and
+     * does not change the {@link SortedMap} view returned by {@link #prefixMap(Object)}.
+     * </p>
+     *
+     * @param key The key used in the search.
+     * @return A removable {@link Iterator} of the entries whose key is prefixed by the search key.
+     * @since 4.6.1
+     */
+    @Override
+    public Iterator<Map.Entry<K, V>> prefixIterator(final K key) {
+        Objects.requireNonNull(key, "key");
+        return new PrefixIterator(key, lengthInBits(key));
     }
 
     /**
