@@ -18,7 +18,8 @@ New features
 * Add a Maven benchmark profile for JMH. Thanks to Gary Gregory. 
 * COLLECTIONS-893:  Add SortedMultiSet interface, TreeMultiSet implementation, sorted multiset decorators, and MultiSetUtils factory methods, giving MultiSet feature parity with SortedBag/TreeBag. Thanks to Paul King. 
 * COLLECTIONS-893:  Add MultiSetUtils.containsOccurrences/removeOccurrences/retainOccurrences providing Bag's cardinality-respecting semantics under explicit names, and Bag-to-MultiSet migration notes in the Bag javadoc. Thanks to Paul King. 
-* Add IterableUtils.sumSizes(Iterable<? extends Collection<E>>). Thanks to Gary Gregory. 
+* Add IterableUtils.sumSizes(Iterable<? extends Collection<E>>). Thanks to Gary Gregory.
+* Add UnmodifiableMultiValuedMap.deepUnmodifiableMultiValuedMap(MultiValuedMap), a live, non-copying deep read-only view whose asMap() value collections (through get, values and entrySet) cannot be used to modify the backing map; the existing shallow unmodifiableMultiValuedMap behavior is retained.
 
 Fixed Bugs
 ----------
