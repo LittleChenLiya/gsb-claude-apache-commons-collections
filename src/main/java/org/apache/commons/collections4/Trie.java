@@ -17,6 +17,8 @@
 
 package org.apache.commons.collections4;
 
+import java.util.Iterator;
+import java.util.Map;
 import java.util.SortedMap;
 
 /**
@@ -42,4 +44,27 @@ public interface Trie<K, V> extends IterableSortedMap<K, V> {
      * @return A {@link SortedMap} view of this {@link Trie} with all elements whose key is prefixed by the search key.
      */
     SortedMap<K, V> prefixMap(K key);
+
+    /**
+     * Returns an {@link Iterator} over the entries of this {@link Trie} whose keys are prefixed by the given key, in ascending key order, whose
+     * {@link Iterator#remove()} deletes the current entry from this {@link Trie} while iteration continues at the successor of the removed entry in the
+     * original key order: no remaining entry is skipped and no already removed entry is returned.
+     * <p>
+     * The iterator follows the usual cursor contract: {@link Iterator#remove()} may only be called once per {@link Iterator#next()} and is rejected with an
+     * {@link IllegalStateException} if {@link Iterator#next()} has not been called yet or if it is called twice in a row. A structural modification of the
+     * underlying {@link Trie} by any means other than the iterator's own {@link Iterator#remove()} causes a fail-fast
+     * {@link java.util.ConcurrentModificationException}.
+     * </p>
+     * <p>
+     * This default implementation delegates to {@code prefixMap(prefix).entrySet().iterator()}; the exact removal and fail-fast behavior then depends on
+     * that view's iterator. Implementations are encouraged to override this method with an iterator that guarantees the cursor contract described above.
+     * </p>
+     *
+     * @param prefix The key prefix used in the search.
+     * @return A removable {@link Iterator} over the entries whose key is prefixed by the search key.
+     * @since 4.6.1
+     */
+    default Iterator<Map.Entry<K, V>> removablePrefixIterator(K prefix) {
+        return prefixMap(prefix).entrySet().iterator();
+    }
 }

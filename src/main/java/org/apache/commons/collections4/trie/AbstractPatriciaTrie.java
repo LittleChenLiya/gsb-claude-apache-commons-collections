@@ -553,6 +553,146 @@ public abstract class AbstractPatriciaTrie<K, V> extends AbstractBitwiseTrie<K, 
     }
 
     /**
+     * An {@link Iterator} over the entries of a prefix range that supports {@link #remove()} of the current entry while iteration continues at the
+     * successor of the removed entry in the original key order: no remaining entry is skipped and no already removed entry is returned.
+     * <p>
+     * The cursor is tracked by key rather than by node, so relocating or replacing trie nodes during removal cannot disturb the iteration order. A
+     * structural modification of the {@link Trie} by any means other than this iterator's own {@link #remove()} causes a fail-fast
+     * {@link ConcurrentModificationException}. Calling {@link #remove()} without a preceding {@link #next()}, or twice in a row, is rejected with an
+     * {@link IllegalStateException}.
+     * </p>
+     */
+    private final class RemovablePrefixIterator implements Iterator<Map.Entry<K, V>> {
+
+        /** The prefix that limits iteration. */
+        private final K prefix;
+
+        /** The prefix offset in bits. */
+        private final int offsetInBits;
+
+        /** The number of significant prefix bits. */
+        private final int lengthInBits;
+
+        /** For fast-fail. */
+        private int expectedModCount = AbstractPatriciaTrie.this.modCount;
+
+        /** The key of the next entry to return, or null if iteration is exhausted. */
+        private K nextKey;
+
+        /** The key returned by the most recent {@link #next()} call. */
+        private K currentKey;
+
+        /** Whether {@link #remove()} may currently be called. */
+        private boolean removable;
+
+        /**
+         * Creates a {@link RemovablePrefixIterator} for the given prefix.
+         *
+         * @param prefix the prefix that limits iteration.
+         * @param offsetInBits the prefix offset in bits.
+         * @param lengthInBits the number of significant prefix bits.
+         */
+        RemovablePrefixIterator(final K prefix, final int offsetInBits, final int lengthInBits) {
+            this.prefix = prefix;
+            this.offsetInBits = offsetInBits;
+            this.lengthInBits = lengthInBits;
+            nextKey = keyOf(firstPrefixedEntry());
+        }
+
+        /**
+         * Throws a {@link ConcurrentModificationException} if the {@link Trie} was structurally modified from the outside.
+         */
+        private void checkModCount() {
+            if (expectedModCount != AbstractPatriciaTrie.this.modCount) {
+                throw new ConcurrentModificationException();
+            }
+        }
+
+        /**
+         * Returns the first entry of the prefix range, or null if the range is empty.
+         *
+         * @return the first entry of the prefix range.
+         */
+        private TrieEntry<K, V> firstPrefixedEntry() {
+            if (offsetInBits + lengthInBits == 0) {
+                // An empty prefix addresses the whole trie, like prefixMap does.
+                return firstEntry();
+            }
+            // All keys with the prefix sort right after the prefix itself, so the
+            // ceiling of the prefix is the first prefixed entry, if any.
+            final TrieEntry<K, V> entry = ceilingEntry(prefix);
+            return inPrefixRange(entry) ? entry : null;
+        }
+
+        /**
+         * Tests whether the given entry belongs to the prefix range.
+         *
+         * @param entry the entry to test, may be null.
+         * @return true if the entry is non-null and its key starts with the prefix.
+         */
+        private boolean inPrefixRange(final TrieEntry<K, V> entry) {
+            return entry != null && getKeyAnalyzer().isPrefix(prefix, offsetInBits, lengthInBits, entry.key);
+        }
+
+        /**
+         * Returns the key of the given entry, or null if the entry is null.
+         *
+         * @param entry the entry, may be null.
+         * @return the entry's key or null.
+         */
+        private K keyOf(final TrieEntry<K, V> entry) {
+            return entry == null ? null : entry.getKey();
+        }
+
+        /**
+         * Returns the entry of the prefix range whose key is the original-order successor of the given key, or null if the range is exhausted. The lookup
+         * is key-based, so it stays valid even if the entry holding the given key was removed from the trie.
+         *
+         * @param key the key whose successor is sought.
+         * @return the successor entry within the prefix range.
+         */
+        private TrieEntry<K, V> nextPrefixedEntry(final K key) {
+            // Prefixed keys form one contiguous block in key order; the first key
+            // greater than a prefixed key either still has the prefix or ends the range.
+            final TrieEntry<K, V> entry = higherEntry(key);
+            return inPrefixRange(entry) ? entry : null;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return nextKey != null;
+        }
+
+        @Override
+        public Map.Entry<K, V> next() {
+            checkModCount();
+            if (nextKey == null) {
+                throw new NoSuchElementException();
+            }
+            currentKey = nextKey;
+            removable = true;
+            // Prefetch the original-order successor before any remove() can happen;
+            // removing currentKey cannot change the order of the keys after it.
+            nextKey = keyOf(nextPrefixedEntry(currentKey));
+            final TrieEntry<K, V> entry = getEntry(currentKey);
+            // Return a snapshot so that a later remove() cannot mutate an entry
+            // that was already handed out.
+            return new AbstractMap.SimpleImmutableEntry<>(entry);
+        }
+
+        @Override
+        public void remove() {
+            if (!removable) {
+                throw new IllegalStateException();
+            }
+            checkModCount();
+            AbstractPatriciaTrie.this.remove(currentKey);
+            removable = false;
+            expectedModCount = AbstractPatriciaTrie.this.modCount;
+        }
+    }
+
+    /**
      * A submap used for prefix views over the {@link Trie}.
      */
     private final class PrefixRangeMap extends AbstractRangeMap {
@@ -1876,6 +2016,23 @@ public abstract class AbstractPatriciaTrie<K, V> extends AbstractBitwiseTrie<K, 
     @Override
     public SortedMap<K, V> prefixMap(final K key) {
         return getPrefixMapByBits(key, 0, lengthInBits(key));
+    }
+
+    /**
+     * Returns a removable {@link Iterator} over the entries whose keys are prefixed by the given key, in ascending key order.
+     * <p>
+     * Removing the current entry through the iterator lets iteration continue at the original-order successor: no remaining entry is skipped and no
+     * already removed entry is returned. The iterator is fail-fast with respect to external structural modifications of this {@link Trie}, and
+     * {@link Iterator#remove()} without a preceding {@link Iterator#next()} is rejected with an {@link IllegalStateException}.
+     * </p>
+     *
+     * @param key The key used in the search.
+     * @return A removable {@link Iterator} over the entries whose key is prefixed by the search key.
+     * @since 4.6.1
+     */
+    @Override
+    public Iterator<Map.Entry<K, V>> removablePrefixIterator(final K key) {
+        return new RemovablePrefixIterator(key, 0, lengthInBits(key));
     }
 
     /**
